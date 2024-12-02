@@ -1,0 +1,81 @@
+---
+title: "EDS 223: Week 10"
+format: html
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+library(terra)
+library(sf)
+library(tidyverse)
+library(tmap)
+library(here)
+```
+
+## Load LiDAR data
+```{r}
+# digital surface model (DSM)
+dsm <- rast(here("data", "SJER2013_DSM.tif"))
+
+# digital terrain model (DTM)
+dtm <- rast(here("data", "SJER2013_DTM.tif"))
+```
+
+```{r}
+# to check if the two rasters have the same resolution, position, and extent, let's just try to stack them. If it works, we know they match 
+test_raster <- c(dsm, dtm)
+```
+
+```{r}
+# create canopy height model 
+chm <- dsm - dtm
+```
+
+## Load vegetation plot geometries
+```{r}
+# read in plot centroids and make sure crs matches at the same time
+plot_centroids <- st_read(here("data", "PlotCentroids", "SJERPlotCentroids_Buffer.shp")) %>%
+  st_transform(., crs = st_crs(chm))
+```
+
+```{r}
+# make a map of our canopy height model
+tm_shape(chm) +
+  tm_raster(title = "Canopy height model (m)") +
+  tm_shape(plot_centroids) +
+  tm_polygons()
+```
+
+## Load vegetation survey data
+```{r}
+# read in survey data and find the maximum tree height in each plot
+veg_surveys <- read_csv(here("data", "VegetationData", "D17_2013_vegStr.csv")) %>%
+  group_by(plotid) %>%
+  summarise("survey_height" = max(stemheight, na.rm = TRUE))
+```
+
+```{r}
+# extract the maximum height in each plot from the chm
+extract_chm_height <- terra::extract(chm, plot_centroids, fun = max) %>%
+  rename(chm_height = SJER2013_DSM) %>%
+  select(chm_height)
+
+# combine tree height estimates and the plot surveys
+plot_centroids <- cbind(plot_centroids, extract_chm_height) %>%
+  left_join(., veg_surveys, by = c("Plot_ID" = "plotid"))
+```
+
+```{r}
+# plot results --> comparing the estimates from two methods - LiDAR and on-the-ground surveys
+ggplot(plot_centroids, aes(x = chm_height, y = survey_height)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  geom_abline(slope = 1, intercept = 0, alpha = 0.5, lty = 2) +
+  xlab("Maximum measured height (LiDAR) (m)") +
+  ylab("Maximum measured height (survey) (m)") +
+  ggtitle("Validating LiDAR Measurements") +
+  theme_minimal()
+```
+
+
